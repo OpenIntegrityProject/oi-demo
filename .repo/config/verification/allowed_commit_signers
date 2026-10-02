@@ -13,3 +13,7 @@
 # Agent, Claude Code on chryseikori; Secure Enclave key without Touch ID; working branches only
 # SHA256:XpjMQMMYvptZM4/VAeiJ5kZh3UisLfodEMHoWmfSwgQ
 @claude-local/chryseikori namespaces="git" sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBDlDZX2pasUGMySdgAfiNe2jHfoXO56KWTiY+YEZk70b23EnK5Ppk7ngUvnPmtJCrV97IZyLRwtqLYYsFcEtyWAAAAAEc3NoOg==
+
+# Agent, Claude Code on the web; Anthropic-held key, scope and rotation unconfirmed; working branches only
+# SHA256:32dP45eSMmVSt/G/CGvcxl/P+MO3Nwj9xeTh/GSA2wc
+@claude-code-web namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKy87HxSEheG8vEPhSs9u2KZCtVErAQfpmprtUJCZ2w7
