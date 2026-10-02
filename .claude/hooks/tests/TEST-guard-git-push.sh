@@ -13,7 +13,21 @@ git -C "$Repo" config alias.p push
 git -C "$Repo" config alias.pm 'push origin main'
 git -C "$Repo" config alias.sp '!git push origin main'
 git -C "$Repo" config alias.st status
+git -C "$Repo" config alias.co checkout
 git init -q -b main "$Tmp/onmain"
+
+# Repos whose config picks the destination of a bare push
+cfg_repo() {  # cfg_repo <name> [key value]...
+  local r="$Tmp/$1"; shift
+  git init -q -b claude/work "$r"
+  git -C "$r" remote add origin https://example.com/r.git
+  while [ $# -gt 0 ]; do git -C "$r" config "$1" "$2"; shift 2; done
+}
+cfg_repo pushspec remote.origin.push HEAD:main
+cfg_repo upstream push.default upstream branch.claude/work.remote origin branch.claude/work.merge refs/heads/main
+cfg_repo upstream-ok push.default upstream branch.claude/work.remote origin branch.claude/work.merge refs/heads/claude/work
+cfg_repo matching push.default matching
+cfg_repo mirror remote.origin.mirror true
 
 Run=0 Failed=0
 
@@ -172,6 +186,69 @@ check allow 'git commit -m "$(cat <<'"'"'EOF'"'"'
 Explain git push origin main
 EOF
 )"'
+
+# Third review: a branch switch earlier in the command makes the current
+# branch unknown, so HEAD, @ and a bare push are blocked after it
+check block 'git checkout main && git merge --ff-only claude/x && git push'
+check block 'git checkout main && git merge --ff-only claude/x && git push origin HEAD'
+check block 'git switch main; git push origin @'
+check block 'git rebase origin/main claude/x && git push origin HEAD'
+check block 'git worktree add ../w main && cd ../w && git push'
+check block 'git checkout main && git push -u origin "$(git branch --show-current)"'
+check block 'git co main && git push'
+check block 'git branch -m main && git push'
+check block 'git symbolic-ref HEAD refs/heads/main && git push'
+check block "cd $Tmp/onmain && git push"
+check block 'cd "$SOMEWHERE" && git push origin HEAD'
+check allow 'git checkout claude/y && git push origin claude/y'
+check allow 'git checkout -b claude/new && git push -u origin claude/new'
+check allow 'git switch -c claude/new; git push origin claude/new:claude/new'
+check allow 'git checkout -- README.md && git push'
+check allow 'git worktree list && git push'
+check allow "cd $Repo && git push"
+check allow "cd $Tmp/onmain && git push origin claude/work"
+
+# Third review: config that picks the destination, inline or in the repo
+check block 'git -c push.default=upstream push'
+check block 'git -c remote.origin.push=HEAD:main push origin'
+check block 'git -c remote.origin.push=HEAD:main push'
+check block 'git config remote.origin.push HEAD:main && git push'
+check block 'git config push.default upstream'
+check block 'git config --local branch.claude/work.merge refs/heads/main'
+check block 'git remote add --mirror=push backup https://example.com/r.git'
+check block 'P=upstream git --config-env=push.default=P push'
+check block 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=upstream git push'
+check block 'git -c remote.origin.mirror=true push origin'
+check block 'git push origin :'
+check block "git -C $Tmp/pushspec push"
+check block "git -C $Tmp/pushspec push origin"
+check block "git -C $Tmp/pushspec push origin claude/work"
+check block "git -C $Tmp/upstream push"
+check block "git -C $Tmp/matching push origin"
+check block "git -C $Tmp/mirror push origin"
+check allow "git -C $Tmp/upstream-ok push"
+check allow "git -C $Tmp/upstream push origin claude/work"
+check allow 'git config --get push.default'
+check allow 'git config user.name "A B"'
+check allow 'git -c core.quotepath=off push origin claude/work'
+check allow 'git -c user.signingkey=x commit -S -m x && git push origin claude/work'
+
+# Third review: more wrappers and shells
+check block 'arch -arm64 git push origin HEAD:main'
+check block 'xcrun git push origin HEAD:main'
+check block 'caffeinate -i git push origin HEAD:main'
+check block 'script -q /dev/null git push origin HEAD:main'
+check block 'script /dev/null git push origin HEAD:main'
+check block 'find . -maxdepth 0 -exec git push origin HEAD:main \;'
+check block "tcsh -c 'git push origin HEAD:main'"
+check block "csh -c 'git push origin HEAD:main'"
+check allow 'caffeinate -i git push origin claude/work'
+check allow 'script -q /dev/null git status'
+check allow 'find . -name "*.md" -exec grep -l push {} +'
+
+# Third review: alias spellings
+check block 'P=push git --config-env=alias.p=P p origin HEAD:main'
+check block 'git -c alias.P=push p origin HEAD:main'
 
 # Fails closed when perl is missing
 NoPerl="$Tmp/noperl"

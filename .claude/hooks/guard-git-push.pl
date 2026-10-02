@@ -14,9 +14,14 @@ use warnings;
 
 my $input = do { local $/; <STDIN> } // '';
 my $command = $input;
+# Directory the command starts in; cd moves it (see check_segment)
+my $cwd;
 if (eval { require JSON::PP; 1 }) {
   my $data = eval { JSON::PP::decode_json($input) };
-  $command = $data->{tool_input}{command} // '' if ref $data eq 'HASH';
+  if (ref $data eq 'HASH') {
+    $command = $data->{tool_input}{command} // '';
+    $cwd = $data->{cwd} if defined $data->{cwd} && -d $data->{cwd};
+  }
 }
 
 # Options of git itself that take a separate value (git -C dir push ...)
@@ -30,11 +35,18 @@ my %push_like = map { $_ => 1 } qw(push send-pack http-push);
 # their flags or numbers, shells (sh -c, bash <<<), and shell keywords.
 my $prefix_word = qr{^(?:\w+=\S*|-\S*|\d\S*|!|\{|\}|\.
   |if|then|else|elif|do|while|until|time|source
-  |(?:\S*/)?(?:sudo|env|exec|command|builtin|nohup|nice|timeout|stdbuf|xargs|eval|(?:ba|z|da|k)?sh))$}x;
-my $shell = qr{(?:^|[\s/])(?:ba|z|da|k)?sh\b};
+  |(?:\S*/)?(?:sudo|env|exec|command|builtin|nohup|nice|timeout|stdbuf|xargs|eval
+    |arch|xcrun|caffeinate|script|(?:ba|z|da|k|c|tc)?sh))$}x;
+my $shell = qr{(?:^|[\s/])(?:ba|z|da|k|c|tc)?sh\b};
 my $git_word = qr{(?:^|/)git$};
+# Config keys that choose where, or what, git push sends
+my $dest_key = qr{^(?:push\.\S+|remote\.(?:\S+\.(?:push|mirror)|pushdefault)
+  |branch\.\S+\.(?:merge|remote|pushremote)|include(?:if)?\.\S+)$}xi;
 # Placeholder for a command substitution whose output can't be known
 my $unknown = '$__substitution__';
+# Placeholder for a substitution that names the current branch. It is
+# resolved when the push is checked, since an earlier checkout may move it.
+my $current = "\x01";
 
 sub block {
   print STDERR "guard-git-push: blocked: $_[0]. Agents push only to literal "
@@ -58,6 +70,17 @@ sub in_dir {
 }
 
 sub current_branch { in_dir($_[0], qw(symbolic-ref --quiet --short HEAD)) }
+sub config_all { split /\n/, in_dir($_[0], 'config', '--get-all', $_[1]) }
+
+# Set once an earlier part of the command may change the current branch;
+# the hook reads the repo before any of the command runs
+my $state_changed;
+
+sub branch_at {
+  block("$state_changed, so the current branch can't be checked; push a literal claude/* name")
+    if $state_changed;
+  return current_branch($_[0]);
+}
 
 # True when a destination ref is, or as a glob could match, main or staging/*
 sub protected {
@@ -80,6 +103,9 @@ sub is_merge_pr {
 
 # Shell variables assigned earlier in the command: name => [values]
 my %vars;
+# Set when the command puts git config or a repo location in the environment
+my $env_config;
+
 sub expand {
   my ($word) = @_;
   my @out = ($word);
@@ -99,8 +125,24 @@ sub expand {
   return @out;    # anything still holding $ is unresolved
 }
 
+# Check one refspec's destination
+sub check_refspec {
+  my ($dir, $spec, $from) = @_;
+  for my $s (expand($spec)) {
+    (my $shown = $s) =~ s/$current/\$(current branch)/g;
+    $shown .= ", from $from" if $from;
+    block("force refspec $shown") if $s =~ /^\+/;
+    block("refspec : pushes every matching branch") if $s eq ':';
+    my $dst = $s =~ /:/ ? (split /:/, $s, 2)[1] : $s;
+    block("destination $shown can't be checked; use a literal branch name") if $dst =~ /\$/;
+    $dst =~ s/$current/branch_at($dir)/ge;
+    $dst = branch_at($dir) if $dst eq 'HEAD' || $dst eq '@';
+    block("push to protected branch ($shown)") if protected($dst);
+  }
+}
+
 sub check_push {
-  my ($dir, $via_xargs, @args) = @_;
+  my ($dir, $via_xargs, $override, @args) = @_;
   my @positional;
   for (my $j = 0; $j < @args; $j++) {
     my $w = $args[$j];
@@ -111,23 +153,52 @@ sub check_push {
     next if $w =~ /^-/;
     push @positional, $w;
   }
-  block("git push fed by xargs; destination can't be checked") if $via_xargs;
+  block("git push fed by xargs or find; destination can't be checked") if $via_xargs;
+  block("$override changes where git push goes") if $override;
 
   my ($remote, @refspecs) = @positional;
-  for my $spec (@refspecs) {
-    for my $s (expand($spec)) {
-      block("force refspec $s") if $s =~ /^\+/;
-      my $dst = $s =~ /:/ ? (split /:/, $s, 2)[1] : $s;
-      block("destination $s can't be checked; use a literal branch name") if $dst =~ /\$/;
-      $dst = current_branch($dir) if $dst eq 'HEAD' || $dst eq '@';
-      block("push to protected branch ($s)") if protected($dst);
-    }
-  }
-  # With no refspec, git pushes the current branch (default push.default)
+  check_refspec($dir, $_) for @refspecs;
+
+  # Without a refspec, the repo config and push.default pick the destination
+  my $branch;
   if (!@refspecs) {
-    my $branch = current_branch($dir);
-    block("push from protected branch $branch") if protected($branch);
+    $branch = branch_at($dir);
+    ($remote) = ((map { config_all($dir, $_) } "branch.$branch.pushRemote",
+      'remote.pushDefault', "branch.$branch.remote"), 'origin') unless defined $remote;
   }
+  return unless defined $remote;
+  my ($mirror) = config_all($dir, "remote.$remote.mirror");
+  block("remote.$remote.mirror pushes every ref") if ($mirror // '') =~ /^(?:true|yes|on|1)$/i;
+  # remote.<name>.push applies to a bare push, and also maps a refspec that
+  # names only a source, so check it whenever it is set
+  my @configured = config_all($dir, "remote.$remote.push");
+  check_refspec($dir, $_, "remote.$remote.push") for @configured;
+  return if @refspecs || @configured;
+
+  my ($mode) = map { lc } config_all($dir, 'push.default'), 'simple';
+  return if $mode eq 'nothing';
+  block("push.default=matching pushes every branch the remote also has") if $mode eq 'matching';
+  my $dst = $branch;
+  ($dst) = config_all($dir, "branch.$branch.merge") if $mode eq 'upstream' || $mode eq 'tracking';
+  block("push from $branch goes to protected branch $dst") if protected($dst // '');
+}
+
+# Note git commands that change the current branch, and block ones that
+# change the push config
+sub check_state_change {
+  my ($sub, @args) = @_;
+  if ($sub eq 'config' && !grep { /^(?:--get\S*|--list|-l|get|list)$/ } @args) {
+    my ($key) = grep { /$dest_key/ } @args;
+    block("git config $key changes where git push goes") if defined $key;
+  }
+  block("git remote --mirror changes what git push sends")
+    if $sub eq 'remote' && grep { /^--mirror/ } @args;
+  $state_changed //= "an earlier git $sub may change the branch"
+    if $sub =~ /^(?:switch|rebase)$/
+    || ($sub eq 'checkout' && !grep { $_ eq '--' } @args)
+    || ($sub eq 'worktree' && ($args[0] // '') !~ /^(?:list|prune)$/)
+    || ($sub eq 'branch' && grep { /^(?:-[^-]*[mMut]|--(?:move|track|set-upstream))/ } @args)
+    || ($sub eq 'symbolic-ref' && (grep { !/^-/ } @args) >= 2);
 }
 
 # Check one simple command (already split at separators)
@@ -144,18 +215,42 @@ sub check_segment {
     return;
   }
 
+  # Config or a repo location in the environment (GIT_CONFIG_PARAMETERS,
+  # GIT_CONFIG_COUNT, GIT_DIR, ...) can't be read here
+  my ($env) = grep { /^(?:GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE)=/ } @words;
+  $env_config //= "setting $1" if defined $env && $env =~ /^(\w+)=/;
+
   # Skip to the command word, recording assignments and xargs on the way.
   # A word right after a flag may be that flag's value (sudo -iu user).
-  my ($i, $via_xargs) = (0, 0);
+  # find runs what follows -exec; script takes a file before the command.
+  my ($i, $via_xargs, $script_file) = (0, 0, 0);
   while ($i < @words && $words[$i] !~ $git_word && !is_merge_pr($words[$i])) {
     my $w = $words[$i];
-    if    ($w =~ /^(\w+)=(.*)$/) { $vars{$1} = [$2] }
-    elsif ($w =~ $prefix_word)   { $via_xargs = 1 if $w =~ m{(?:^|/)xargs$} }
+    if ($w =~ m{(?:^|/)find$}) {
+      $i++ while $i < @words && $words[$i] !~ /^-(?:exec|execdir|ok|okdir)$/;
+      $via_xargs = 1;
+    }
+    elsif ($w =~ /^(\w+)=(.*)$/) { $vars{$1} = [$2] }
+    elsif ($w =~ $prefix_word) {
+      $via_xargs = 1 if $w =~ m{(?:^|/)xargs$};
+      $script_file = 1 if $w =~ m{(?:^|/)script$};
+    }
     elsif ($i > 0 && $words[$i - 1] =~ /^-/ && $words[$i - 1] !~ /^-\w*c$/) { }
+    elsif ($script_file) { $script_file = 0 }
     else  { last }
     $i++;
   }
   return if $i >= @words;
+
+  # cd moves where the current branch and config are read from
+  if ($words[$i] =~ /^(?:cd|pushd|popd)$/) {
+    my $to = $words[$i] eq 'popd' ? undef : $words[$i + 1] // $ENV{HOME};
+    $to =~ s{^~(?=/|$)}{$ENV{HOME}} if defined $to;
+    $to = "$cwd/$to" if defined $to && defined $cwd && $to !~ m{^/};
+    if (defined $to && $to !~ /\$|^-/ && -d $to) { $cwd = $to }
+    else { $state_changed //= "an earlier $words[$i] moves to a directory that can't be checked" }
+    return;
+  }
 
   my @cmd = expand($words[$i]);
   block("merge_pr.sh is the human's step") if grep { is_merge_pr($_) } @cmd;
@@ -163,32 +258,42 @@ sub check_segment {
   return unless grep { /$git_word/ || /\$/ } @cmd;
   $i++;
 
-  my ($dir, %cli_alias);
+  my ($dir, $override, %cli_alias) = ($cwd, $env_config);
   while ($i < @words && $words[$i] =~ /^-/) {
     my ($opt, $val) = ($words[$i], $words[$i + 1] // '');
     if ($opt eq '-C') {
       $dir = (defined $dir && $val !~ m{^/}) ? "$dir/$val" : $val;
     }
     if ($opt eq '-c' && $val =~ /^alias\.([^=]+)=(.*)$/i) {
-      $cli_alias{$1} = $2;
+      $cli_alias{lc $1} = $2;    # git lowercases config keys
     }
+    my ($key) = $opt eq '-c' ? $val =~ /^([^=]*)/ : ();
+    $override //= "git -c $key" if defined $key && $key =~ $dest_key;
+    $override //= "git $opt" if $opt =~ /^--(?:config-env|git-dir|work-tree)/;
     $i += $git_opt_with_value{$opt} ? 2 : 1;
   }
   return unless $i < @words;
 
   my ($sub, @args) = @words[$i .. $#words];
   for my $s (expand($sub)) {
-    # An unresolved subcommand could be push
+    # An unresolved subcommand could be push, or could change the branch
     if ($push_like{$s} || $s =~ /\$/) {
-      check_push($dir, $via_xargs, @args);
+      check_push($dir, $via_xargs, $override, @args);
+      $state_changed //= "an earlier git $s may change the branch" if $s =~ /\$/;
       next;
     }
-    my $alias = $cli_alias{$s} // in_dir($dir, 'config', '--get', "alias.$s");
+    check_state_change($s, @args);
+    my $alias = $cli_alias{lc $s} // in_dir($dir, 'config', '--get', "alias.$s");
     next if $alias eq '';
-    block("git alias $s runs a shell command that pushes") if $alias =~ /^!.*\bpush\b/;
-    if ($alias =~ /^\s*(\S+)\s*(.*)$/ && $push_like{$1}) {
-      check_push($dir, $via_xargs, (split ' ', $2), @args);
+    if ($alias =~ /^!/) {
+      block("git alias $s runs a shell command that pushes") if $alias =~ /\bpush\b/;
+      $state_changed //= "git alias $s runs a shell command"
+        if $alias =~ /\b(?:checkout|switch|rebase|worktree|branch|symbolic-ref|config|cd)\b/;
+      next;
     }
+    my ($alias_sub, @alias_args) = split ' ', $alias;
+    if ($push_like{$alias_sub}) { check_push($dir, $via_xargs, $override, @alias_args, @args) }
+    else                        { check_state_change($alias_sub, @alias_args, @args) }
   }
 }
 
@@ -219,7 +324,7 @@ for (1 .. 20) {
     my $inner = $1 // $2;
     push @commands, $inner;
     $inner =~ /^\s*git\s+(?:branch\s+--show-current|rev-parse\s+--abbrev-ref\s+HEAD|symbolic-ref\s+(?:--quiet\s+)?--short\s+HEAD)\s*$/
-      ? (current_branch(undef) || $unknown) : $unknown }ge;
+      ? $current : $unknown }ge;
 }
 push @commands, $command;
 
