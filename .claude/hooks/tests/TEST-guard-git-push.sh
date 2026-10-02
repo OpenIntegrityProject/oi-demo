@@ -250,6 +250,35 @@ check allow 'find . -name "*.md" -exec grep -l push {} +'
 check block 'P=push git --config-env=alias.p=P p origin HEAD:main'
 check block 'git -c alias.P=push p origin HEAD:main'
 
+# Third review: quotes, comments and heredocs read as the shell reads them
+check block 'git push origin HEAD:$( (echo main) )'
+check block "echo \"'\"; git push origin HEAD:\$(printf ma)in #'"
+check block "echo '<<EOF'
+git push origin HEAD:main
+EOF"
+check block '# <<EOF
+git push origin HEAD:main
+EOF'
+check block "cat <<EOF | bash
+git push origin main
+EOF"
+check block 'echo $((1<<2))
+git push origin main'
+check block "bash -c \"echo it's\"; git push origin main"
+check block "bash -c 'echo \$(git push origin main)'"
+check block 'echo "$'"'"'"; git push origin main; echo "'"'"'"'
+check block 'sh -c "git status
+git push origin main"'
+check allow 'git commit -m "Fix the guard
+
+git push origin main is still blocked"'
+check allow 'gh pr create --title x --body "Steps:
+git push origin HEAD:main (blocked)
+git push origin claude/x; then merge"'
+check allow 'git push origin claude/work # never push main'
+check allow 'echo "(git push origin main)"'
+check allow "git commit -m 'one; git push origin main'"
+
 # Fails closed when perl is missing
 NoPerl="$Tmp/noperl"
 mkdir "$NoPerl"

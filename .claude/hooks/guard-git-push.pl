@@ -297,30 +297,131 @@ sub check_segment {
   }
 }
 
-# Normalize: drop heredoc bodies unless a shell reads them (before joining
-# continuations, so a body line ending in \ can't swallow the terminator),
-# join backslash-newline continuations, read here-strings as input to
-# whatever precedes them, decode $'...' quoting, and neutralize
-# substitution syntax inside single quotes.
-$command =~ s{^([^\n]*?<<-?\s*(['"]?)(\w+)\2[^\n]*\n)(.*?)^\s*\3\s*$}
-  { my ($head, $body) = ($1, $4); $head =~ $shell ? "$head$body" : "$head\n" }gmse;
-$command =~ s/\\\n//g;
+# True when quoted text in a command goes to a shell as a script
+# (sh -c '...', eval "...") rather than being data such as a message
+sub is_script {
+  (my $cmd = $_[0]) =~ s/["'\\]//g;
+  return ($cmd =~ $shell || $cmd =~ /(?:^|\s)eval\s/) ? 1 : 0;
+}
+
+# Read the command the way the shell would, far enough to tell code from
+# text: drop comments, and heredoc bodies unless a shell reads them; join
+# backslash-newline continuations; decode $'...' quoting; and blank out
+# separators, newlines and substitution syntax in quoted text, so a commit
+# message or PR body can't read as commands. Quoted text that is a script
+# for a shell stays as written, to be checked as code.
+sub normalize {
+  my ($in) = @_;
+  my ($out, $p, $line_start, @heredocs) = ('', 0, 0);
+  # Levels of nesting: code (the top, $(...), `...`) or quoted text.
+  # Each code level keeps the text of its current simple command.
+  my @stack = ({ code => 1, close => '', depth => 0, cmd => '' });
+  while ($p < length $in) {
+    my ($c, $two, $lv) = (substr($in, $p, 1), substr($in, $p, 2), $stack[-1]);
+
+    if (!$lv->{code}) {
+      my $owner = $stack[-2];
+      if ($c eq $lv->{close}) { pop @stack }
+      elsif ($lv->{close} eq '"' && $c eq '\\') {
+        my $esc = substr($in, $p + 1, 1);
+        $out .= "\\$esc" unless $esc eq "\n";
+        $owner->{cmd} .= "\\$esc";
+        $p += 2;
+        next;
+      }
+      elsif ($lv->{close} eq '"' && ($two eq '$(' || $c eq '`')) {
+        push @stack, { code => 1, close => $c eq '`' ? '`' : ')', depth => 0, cmd => '' };
+        $out .= $c eq '`' ? $c : $two;
+        $p += length($c eq '`' ? $c : $two);
+        next;
+      }
+      elsif (!$lv->{script} && $c =~ /[;&|()\n`]/) { $c = ' ' }
+      $owner->{cmd} .= $c;
+      $out .= $c;
+      $p++;
+      next;
+    }
+
+    if ($c eq '\\') {
+      my $esc = substr($in, $p + 1, 1);
+      $out .= "\\$esc" unless $esc eq "\n";
+      $lv->{cmd} .= "\\$esc";
+      $p += 2;
+      next;
+    }
+    if ($lv->{close} eq ')' && $c eq '(') { $lv->{depth}++ }
+    if (($lv->{close} eq ')' && $c eq ')' && !$lv->{depth}--) || ($lv->{close} eq '`' && $c eq '`')) {
+      pop @stack;
+      $out .= $c;
+      $p++;
+      next;
+    }
+    # A comment runs to the end of the line
+    if ($c eq '#' && ($p == 0 || substr($in, $p - 1, 1) =~ /[\s;&|()<>]/)) {
+      my $nl = index($in, "\n", $p);
+      $p = $nl < 0 ? length $in : $nl;
+      next;
+    }
+    if (substr($in, $p) =~ /^\$'((?:[^'\\]|\\.)*)'/s) {
+      my ($s, $all) = ($1, $&);
+      $s =~ s{\\x([0-9a-fA-F]{1,2})|\\([0-7]{1,3})|\\(.)}
+        { defined $1 ? chr(hex $1) : defined $2 ? chr(oct $2) : $3 eq 'n' ? "\n" : $3 eq 't' ? "\t" : $3 }ge;
+      $s =~ s/['"\\]//g;
+      $s =~ s/[;&|()\n`]/ /g unless is_script($lv->{cmd});
+      $out .= $s;
+      $lv->{cmd} .= $s;
+      $p += length $all;
+      next;
+    }
+    if ($c eq "'" || $c eq '"') {
+      push @stack, { code => 0, close => $c, script => is_script($lv->{cmd}) };
+    }
+    elsif ($two eq '$(' || $c eq '`') {
+      push @stack, { code => 1, close => $c eq '`' ? '`' : ')', depth => 0, cmd => '' };
+      if ($two eq '$(') { $out .= $two; $p += 2; next }
+    }
+    elsif (substr($in, $p) =~ /^<<-?\s*(?:(['"])(\w+)\1|\\?(\w+))/) {
+      push @heredocs, $2 // $3;
+      $out .= $&;
+      $lv->{cmd} .= $&;
+      $p += length $&;
+      next;
+    }
+    elsif ($c eq "\n") {
+      # Heredoc bodies start on the next line. A body counts only when its
+      # terminator is found, so a stray << can't hide the lines after it.
+      my $line = substr($in, $line_start, $p - $line_start);
+      $p++;
+      if ($line !~ $shell) {
+        for my $end (@heredocs) {
+          $p += length $& if substr($in, $p) =~ /\A.*?^[ \t]*\Q$end\E[ \t]*(?:\n|\z)/ms;
+        }
+      }
+      @heredocs = ();
+      $line_start = $p;
+      $lv->{cmd} = '';
+      $out .= "\n";
+      next;
+    }
+    $lv->{cmd} = $c =~ /[;&|()]/ ? '' : $lv->{cmd} . $c;
+    $out .= $c;
+    $p++;
+  }
+  return $out;
+}
+
+# Read here-strings as input to whatever precedes them (bash <<< "...")
 $command =~ s/<<</ /g;
-$command =~ s{\$'((?:[^'\\]|\\.)*)'}{
-  my $s = $1;
-  $s =~ s{\\x([0-9a-fA-F]{1,2})|\\([0-7]{1,3})|\\(.)}
-    { defined $1 ? chr(hex $1) : defined $2 ? chr(oct $2) : $3 eq 'n' ? "\n" : $3 eq 't' ? "\t" : $3 }ge;
-  $s =~ s/['"\\]//g;
-  $s }ge;
-$command =~ s{'[^']*'}{ (my $q = $&) =~ s/`|\$\(/ /g; $q }ge;
+$command = normalize($command);
 
 # Pull out command substitutions, innermost first: each is checked as a
 # command of its own, and stands in its outer command as an unknown value,
 # so a destination like HEAD:$(echo main) is blocked as unresolvable. The
-# usual ways of naming the current branch are resolved instead.
+# usual ways of naming the current branch are resolved instead. Plain
+# parentheses inside a substitution, $( (echo main) ), are kept with it.
 my @commands;
 for (1 .. 20) {
-  last unless $command =~ s{\$\(([^()]*)\)|`([^`]*)`}{
+  last unless $command =~ s{\$\(((?:[^()`\$]++|\$(?!\()|\((?1)\))*)\)|`([^`]*)`}{
     my $inner = $1 // $2;
     push @commands, $inner;
     $inner =~ /^\s*git\s+(?:branch\s+--show-current|rev-parse\s+--abbrev-ref\s+HEAD|symbolic-ref\s+(?:--quiet\s+)?--short\s+HEAD)\s*$/
