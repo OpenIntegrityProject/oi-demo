@@ -1,0 +1,4 @@
+# Machine-specific Claude Code settings (agent signing key)
+.claude/settings.local.json
+# Signing environment reports, reviewed before committing
+.repo/reports/

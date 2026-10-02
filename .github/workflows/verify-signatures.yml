@@ -1,0 +1,45 @@
+name: Verify commit signatures
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-signatures-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # For pull requests, check out the PR head itself: the default
+      # refs/pull/N/merge commit is created and left unsigned by GitHub.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install zsh
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh
+
+      - name: Run verifier regression tests
+        run: zsh .repo/scripts/tests/TEST-verify_commit_signatures.sh
+
+      - name: Run bootstrap and merge regression tests
+        if: hashFiles('.repo/scripts/tests/TEST-bootstrap_oi_repo.sh') != ''
+        run: zsh .repo/scripts/tests/TEST-bootstrap_oi_repo.sh
+
+      # On main, and on staging/* branches holding the commit about to be
+      # fast-forwarded onto main, the checked-out history is the protected
+      # chain. Everywhere else, main's rules apply to origin/main.
+      - name: Verify every commit and tag against the Open Integrity trust chain
+        run: |
+          if [[ "$GITHUB_REF" == refs/heads/main || "$GITHUB_REF" == refs/heads/staging/* ]]; then
+            zsh .repo/scripts/verify_commit_signatures.sh --protected HEAD
+          else
+            zsh .repo/scripts/verify_commit_signatures.sh --protected origin/main
+          fi
