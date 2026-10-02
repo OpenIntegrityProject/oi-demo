@@ -9,4 +9,4 @@ This is an Open Integrity repository. Every commit must be SSH-signed by a key l
 
 ## Why `.claude/settings.json` denies push, merge, and admin commands
 
-Local Claude Code sessions run with the human's own GitHub credentials, which have admin rights on this repo, so a mistaken `git push`, `gh api`, or ruleset edit would succeed with full authority. The deny rules keep agents off `main`, `staging/*`, force pushes, repo settings, and merging. Merging stays the human's step: `merge_pr.sh`, signed with a Touch ID–gated Secure Enclave key.
+Local Claude Code sessions run with the human's own GitHub credentials, which have admin rights on this repo, so a mistaken `git push`, `gh api`, or ruleset edit would succeed with full authority. The deny rules catch the common forms of pushing to `main` or `staging/*`, force pushing, changing repo settings, and merging. They are pattern matches that reduce mistakes, not a security boundary; branch protection and the signature verifier are the real guard. Merging stays the human's step: `merge_pr.sh`, signed with a Touch ID–gated Secure Enclave key.
