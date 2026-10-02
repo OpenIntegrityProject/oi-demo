@@ -9,3 +9,7 @@
 # Human, athena Secure Enclave key (Touch ID)
 # SHA256:yNSBv4tnheZP9bNHOllcLxf1qcXq+LEdqVwE4ebLpEc
 @ChristopherA/athena-se namespaces="git" sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBL0PRlODgW4Q0q6XJNAF7jYf+2CDpQCudFFKRHpyrxj1isQljydCmFTx/o7qj/npIMXirDs2pzNEQ0skqhyNFyoAAAAEc3NoOg==
+
+# Agent, Claude Code on chryseikori; Secure Enclave key without Touch ID; working branches only
+# SHA256:XpjMQMMYvptZM4/VAeiJ5kZh3UisLfodEMHoWmfSwgQ
+@claude-local/chryseikori namespaces="git" sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBDlDZX2pasUGMySdgAfiNe2jHfoXO56KWTiY+YEZk70b23EnK5Ppk7ngUvnPmtJCrV97IZyLRwtqLYYsFcEtyWAAAAAEc3NoOg==
