@@ -8,8 +8,10 @@ set -uo pipefail
 command -v zsh >/dev/null 2>&1 && exit 0
 [ "$(uname -s)" = "Darwin" ] && exit 0
 
+# SessionStart shows stdout to Claude, so the warning goes there; exit 0
+# so a failed install never blocks the session.
 warn() {
-  echo "install-zsh: $1; install zsh manually" >&2
+  echo "install-zsh: $1; install zsh manually before running .repo/scripts"
   exit 0
 }
 
