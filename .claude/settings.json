@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(.repo/config/verification/**)",
+      "Write(.repo/config/verification/**)",
+      "Bash(git push * HEAD:main)",
+      "Bash(git push * main)",
+      "Bash(git push * HEAD:refs/heads/main)",
+      "Bash(git push * staging/*)",
+      "Bash(git push * HEAD:refs/heads/staging/*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(gh api:*)",
+      "Bash(gh repo edit:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(gh ruleset:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(.repo/scripts/merge_pr.sh:*)",
+      "Bash(zsh .repo/scripts/merge_pr.sh:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/install-zsh.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
