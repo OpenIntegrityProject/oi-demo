@@ -138,6 +138,41 @@ check allow 'git push origin claude/work'
 git -C "$Repo" checkout -q -b staging/rc
 check block 'git push -u origin HEAD'
 
+# Second local review: substitutions, variable command words, -c aliases,
+# $'...' quoting, eval, send-pack, combined wrapper flags, merge_pr.sh forms
+git -C "$Repo" symbolic-ref HEAD refs/heads/claude/work
+check block 'git push origin HEAD:$(echo main)'
+check block 'git push origin "HEAD:`echo main`"'
+check block 'eval "git $(echo push) origin HEAD:main"'
+check block 'P=push; git $P origin HEAD:main'
+check block 'G=git; $G push origin HEAD:main'
+check block 'git $UNSET_SUBCOMMAND origin HEAD:main'
+check block 'git -c alias.p=push p origin HEAD:main'
+check block "git -c 'alias.x=!git push origin main' x"
+check block "git push origin \$'HEAD:\\x6dain'"
+check block "git push origin \$'HEAD:\\155ain'"
+check block 'git send-pack https://example.com/r.git HEAD:main'
+check block 'sudo -iu nobody git push origin main'
+check block 'xargs -t git push origin main </dev/null'
+check block 'source .repo/scripts/merge_pr.sh 1'
+check block '. .repo/scripts/merge_pr.sh 1'
+check block '.repo/scripts/merge_pr*.sh 1'
+check block 'bash -x .repo/scripts/merge_pr.sh 1'
+check allow 'git push -u origin "$(git branch --show-current)"'
+check allow 'git push origin HEAD:$(git rev-parse --abbrev-ref HEAD)'
+check allow 'git -c alias.p=push p origin claude/work'
+check allow 'git stash push -m wip'
+check allow 'git log --format=%s $(git merge-base HEAD origin/main)..HEAD'
+check allow 'bash -c "echo git push origin main"'
+check allow "cat > notes.md <<'EOF'
+git push origin main
+path is C:\\temp\\
+EOF"
+check allow 'git commit -m "$(cat <<'"'"'EOF'"'"'
+Explain git push origin main
+EOF
+)"'
+
 # Fails closed when perl is missing
 NoPerl="$Tmp/noperl"
 mkdir "$NoPerl"
