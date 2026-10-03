@@ -1,0 +1,57 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(/.repo/config/verification/**)",
+      "Write(/.repo/config/verification/**)",
+      "Bash(git push * HEAD:main)",
+      "Bash(git push * main)",
+      "Bash(git push * HEAD:refs/heads/main)",
+      "Bash(git push * staging/*)",
+      "Bash(git push * HEAD:refs/heads/staging/*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(gh api:*)",
+      "Bash(gh repo edit:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(gh repo rename:*)",
+      "Bash(gh repo archive:*)",
+      "Bash(gh secret set:*)",
+      "Bash(gh secret delete:*)",
+      "Bash(gh secret remove:*)",
+      "Bash(gh variable set:*)",
+      "Bash(gh variable delete:*)",
+      "Bash(gh variable remove:*)",
+      "Bash(gh release delete:*)",
+      "Bash(gh ruleset:*)",
+      "Bash(gh auth token:*)",
+      "Bash(gh auth status --show-token:*)",
+      "Bash(gh auth status -t:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(.repo/scripts/merge_pr.sh:*)",
+      "Bash(zsh .repo/scripts/merge_pr.sh:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/install-zsh.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-git-push.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
