@@ -23,6 +23,9 @@
       "Bash(gh variable remove:*)",
       "Bash(gh release delete:*)",
       "Bash(gh ruleset:*)",
+      "Bash(gh auth token:*)",
+      "Bash(gh auth status --show-token:*)",
+      "Bash(gh auth status -t:*)",
       "Bash(gh pr merge:*)",
       "Bash(.repo/scripts/merge_pr.sh:*)",
       "Bash(zsh .repo/scripts/merge_pr.sh:*)"
