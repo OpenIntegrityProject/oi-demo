@@ -75,11 +75,42 @@ sub config_all { split /\n/, in_dir($_[0], 'config', '--get-all', $_[1]) }
 # Set once an earlier part of the command may change the current branch;
 # the hook reads the repo before any of the command runs
 my $state_changed;
+# Set when an earlier checkout -b or switch -c names the new current branch:
+# { dir => where it ran, name => the branch }
+my $created;
 
 sub branch_at {
+  my ($dir) = @_;
   block("$state_changed, so the current branch can't be checked; push a literal claude/* name")
     if $state_changed;
-  return current_branch($_[0]);
+  if ($created) {
+    block("an earlier branch switch ran in another directory, so the current branch "
+      . "can't be checked; push a literal claude/* name") if ($created->{dir} // '') ne ($dir // '');
+    return $created->{name};
+  }
+  return current_branch($dir);
+}
+
+# The branch a checkout -b/-B or switch -c/-C creates, if the command has one
+sub created_branch {
+  my ($sub, @args) = @_;
+  my ($flag, $stuck) = $sub eq 'checkout' ? (qr/^-\w*[bB]$|^--orphan$/, qr/^(?:-[bB]|--orphan=)(.+)$/)
+    : $sub eq 'switch' ? (qr/^-\w*[cC]$|^--(?:create|force-create|orphan)$/,
+      qr/^(?:-[cC]|--(?:create|force-create|orphan)=)(.+)$/)
+    : return;
+  for my $j (0 .. $#args) {
+    return $args[$j + 1] if $args[$j] =~ $flag;
+    return $1 if $args[$j] =~ $stuck;
+  }
+  return;
+}
+
+# True when a word names a git command rather than an alias
+my %git_commands;
+sub is_git_command {
+  %git_commands = map { $_ => 1 } split /\n/, in_dir(undef, '--list-cmds=main,others')
+    unless %git_commands;
+  return $git_commands{$_[0]};
 }
 
 # True when a destination ref is, or as a glob could match, main or staging/*
@@ -173,27 +204,50 @@ sub check_push {
   # names only a source, so check it whenever it is set
   my @configured = config_all($dir, "remote.$remote.push");
   check_refspec($dir, $_, "remote.$remote.push") for @configured;
+
+  # push.default=upstream also sends a refspec that names only a branch to
+  # that branch's upstream
+  my ($mode) = map { lc } config_all($dir, 'push.default'), 'simple';
+  my $to_upstream = $mode eq 'upstream' || $mode eq 'tracking';
+  if ($to_upstream && !@configured) {
+    for my $s (map { expand($_) } grep { !/:/ && !/^\+?(?:HEAD|@)$/ } @refspecs) {
+      (my $name = $s) =~ s{^\+?(?:refs/)?(?:heads/)?}{};
+      block("push.default=$mode sends $name to its upstream, which an earlier part of the "
+        . "command may change; push to an explicit claude/*:claude/* refspec")
+        if $state_changed || $created;
+      my ($up) = config_all($dir, "branch.$name.merge");
+      block("push.default=$mode sends $name to its upstream $up") if protected($up // '');
+    }
+  }
   return if @refspecs || @configured;
 
-  my ($mode) = map { lc } config_all($dir, 'push.default'), 'simple';
   return if $mode eq 'nothing';
   block("push.default=matching pushes every branch the remote also has") if $mode eq 'matching';
+  # A branch created in this command may track a protected one already
+  block("push.default=$mode pushes to the upstream of $branch, which this command just "
+    . "created, so it can't be checked; push a literal claude/* name")
+    if $created && $to_upstream;
   my $dst = $branch;
-  ($dst) = config_all($dir, "branch.$branch.merge") if $mode eq 'upstream' || $mode eq 'tracking';
+  ($dst) = config_all($dir, "branch.$branch.merge") if $to_upstream;
   block("push from $branch goes to protected branch $dst") if protected($dst // '');
 }
 
 # Note git commands that change the current branch, and block ones that
 # change the push config
 sub check_state_change {
-  my ($sub, @args) = @_;
+  my ($dir, $sub, @args) = @_;
   if ($sub eq 'config' && !grep { /^(?:--get\S*|--list|-l|get|list)$/ } @args) {
     my ($key) = grep { /$dest_key/ } @args;
     block("git config $key changes where git push goes") if defined $key;
   }
   block("git remote --mirror changes what git push sends")
     if $sub eq 'remote' && grep { /^--mirror/ } @args;
-  $state_changed //= "an earlier git $sub may change the branch"
+  my $name = created_branch($sub, @args);
+  if (defined $name && $name !~ /\$/) {
+    ($state_changed, $created) = (undef, { dir => $dir, name => $name });
+    return;
+  }
+  ($state_changed, $created) = ("an earlier git $sub may change the branch", undef)
     if $sub =~ /^(?:switch|rebase)$/
     || ($sub eq 'checkout' && !grep { $_ eq '--' } @args)
     || ($sub eq 'worktree' && ($args[0] // '') !~ /^(?:list|prune)$/)
@@ -258,7 +312,8 @@ sub check_segment {
   return unless grep { /$git_word/ || /\$/ } @cmd;
   $i++;
 
-  my ($dir, $override, %cli_alias) = ($cwd, $env_config);
+  # $hidden: config the hook can't read, which could define an alias
+  my ($dir, $override, $hidden, %cli_alias) = ($cwd, $env_config, $env_config);
   while ($i < @words && $words[$i] =~ /^-/) {
     my ($opt, $val) = ($words[$i], $words[$i + 1] // '');
     if ($opt eq '-C') {
@@ -270,6 +325,8 @@ sub check_segment {
     my ($key) = $opt eq '-c' ? $val =~ /^([^=]*)/ : ();
     $override //= "git -c $key" if defined $key && $key =~ $dest_key;
     $override //= "git $opt" if $opt =~ /^--(?:config-env|git-dir|work-tree)/;
+    $hidden //= "git $opt" if $opt =~ /^--config-env/;
+    $hidden //= "git -c $key" if defined $key && $key =~ /^include/i;
     $i += $git_opt_with_value{$opt} ? 2 : 1;
   }
   return unless $i < @words;
@@ -282,9 +339,13 @@ sub check_segment {
       $state_changed //= "an earlier git $s may change the branch" if $s =~ /\$/;
       next;
     }
-    check_state_change($s, @args);
+    check_state_change($dir, $s, @args);
     my $alias = $cli_alias{lc $s} // in_dir($dir, 'config', '--get', "alias.$s");
-    next if $alias eq '';
+    if ($alias eq '') {
+      block("$hidden could make git $s an alias for push, and the hook can't read it")
+        if $hidden && !is_git_command($s);
+      next;
+    }
     if ($alias =~ /^!/) {
       block("git alias $s runs a shell command that pushes") if $alias =~ /\bpush\b/;
       $state_changed //= "git alias $s runs a shell command"
@@ -293,7 +354,7 @@ sub check_segment {
     }
     my ($alias_sub, @alias_args) = split ' ', $alias;
     if ($push_like{$alias_sub}) { check_push($dir, $via_xargs, $override, @alias_args, @args) }
-    else                        { check_state_change($alias_sub, @alias_args, @args) }
+    else                        { check_state_change($dir, $alias_sub, @alias_args, @args) }
   }
 }
 

@@ -28,6 +28,7 @@ cfg_repo upstream push.default upstream branch.claude/work.remote origin branch.
 cfg_repo upstream-ok push.default upstream branch.claude/work.remote origin branch.claude/work.merge refs/heads/claude/work
 cfg_repo matching push.default matching
 cfg_repo mirror remote.origin.mirror true
+printf '[alias]\n\tq = push\n' > "$Tmp/aliases.cfg"
 
 Run=0 Failed=0
 
@@ -227,7 +228,12 @@ check block "git -C $Tmp/upstream push"
 check block "git -C $Tmp/matching push origin"
 check block "git -C $Tmp/mirror push origin"
 check allow "git -C $Tmp/upstream-ok push"
-check allow "git -C $Tmp/upstream push origin claude/work"
+check block "git -C $Tmp/upstream push origin claude/work"
+check block "git -C $Tmp/upstream push origin refs/heads/claude/work"
+check allow "git -C $Tmp/upstream push origin claude/work:claude/work"
+check allow "git -C $Tmp/upstream-ok push origin claude/work"
+check block "cd $Tmp/upstream-ok && git checkout -b claude/n origin/main && git push origin claude/n"
+check allow "cd $Tmp/upstream-ok && git checkout -b claude/n origin/main && git push origin claude/n:claude/n"
 check allow 'git config --get push.default'
 check allow 'git config user.name "A B"'
 check allow 'git -c core.quotepath=off push origin claude/work'
@@ -246,9 +252,27 @@ check allow 'caffeinate -i git push origin claude/work'
 check allow 'script -q /dev/null git status'
 check allow 'find . -name "*.md" -exec grep -l push {} +'
 
-# Third review: alias spellings
-check block 'P=push git --config-env=alias.p=P p origin HEAD:main'
-check block 'git -c alias.P=push p origin HEAD:main'
+# Third review: alias spellings. q is not an alias in $Repo, so these pass
+# only if the hook resolves the alias from the command itself.
+check block 'P=push git --config-env=alias.q=P q origin HEAD:main'
+check block 'git -c alias.Q=push q origin HEAD:main'
+check block "git -c include.path=$Tmp/aliases.cfg q origin HEAD:main"
+check block "GIT_CONFIG_GLOBAL=$Tmp/aliases.cfg git q origin HEAD:main"
+check allow "GIT_CONFIG_GLOBAL=$Tmp/aliases.cfg git status"
+check allow 'H=x git --config-env=http.extraHeader=H fetch origin'
+
+# Round 3 self-review: checkout -b and switch -c name the new branch
+check allow 'git checkout -b claude/new && git push -u origin HEAD'
+check allow 'git checkout -qb claude/new && git push origin @'
+check allow 'git switch -c claude/new && git push -u origin "$(git branch --show-current)"'
+check allow 'git switch --create=claude/new && git push -u origin HEAD'
+check allow 'git checkout -b claude/new origin/main && git push'
+check block 'git checkout -b main && git push'
+check block 'git checkout -B staging/x && git push origin HEAD'
+check block 'git switch -c claude/new && git checkout main && git push origin HEAD'
+check block "git -C $Tmp/onmain checkout -b claude/z && git push origin HEAD"
+check block "cd $Tmp/upstream-ok && git checkout -b claude/n origin/main && git push"
+check block 'git checkout -b "$NAME" && git push origin HEAD'
 
 # Third review: quotes, comments and heredocs read as the shell reads them
 check block 'git push origin HEAD:$( (echo main) )'
