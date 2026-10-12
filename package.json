@@ -1,0 +1,11 @@
+{
+  "name": "oi-demo",
+  "version": "0.1.0",
+  "description": "Small text utilities, maintained as an Open Integrity repository",
+  "type": "module",
+  "exports": "./src/text.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "BSD-2-Clause-Patent"
+}
