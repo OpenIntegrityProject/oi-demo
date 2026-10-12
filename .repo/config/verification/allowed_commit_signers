@@ -1,0 +1,17 @@
+# Signers for any commit in this repository
+
+# Human, chryseikori Secure Enclave key (Touch ID)
+# SHA256:Vzkl4/K78dc1t9UkNOKex3ZUuW62u/Z0DVBKmLyD5fM
+@ChristopherA/chryseikori-se namespaces="git" sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBI2g1KU43cEF3/7vU0CTe5lStJx1EKjpK19jr6fLetqRi0nEiY/vZvEN8PVg9XFLxlHvw/NhFWr3869U72SUQboAAAAEc3NoOg==
+
+# Human, seshat Secure Enclave key (Touch ID)
+# SHA256:fH2+IBmxMTTkfFlwrrm+e8dmhZjw5WdTOAGFKuCPk5c
+@ChristopherA/seshat-se namespaces="git" sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBJc5b9L0f0kHNMq4ivzNFikOYvsuD7IE9CBBlJ3HpCMB6FkEv4RE7qBOmqTuLnlu9SPIfPpZdUDUVC+goNVz8gkAAAAEc3NoOg==
+
+# Human, athena Secure Enclave key (Touch ID)
+# SHA256:yNSBv4tnheZP9bNHOllcLxf1qcXq+LEdqVwE4ebLpEc
+@ChristopherA/athena-se namespaces="git" sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBL0PRlODgW4Q0q6XJNAF7jYf+2CDpQCudFFKRHpyrxj1isQljydCmFTx/o7qj/npIMXirDs2pzNEQ0skqhyNFyoAAAAEc3NoOg==
+
+# Human, fleet-soft: shared on-disk ed25519 key, no Touch ID; working commits only, not main
+# SHA256:a61TkTtLFGEYOmdRMbpYGkZwXw2QUrGkAWp3dok8jcw
+@ChristopherA/fleet-soft namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICM+YMv6FoadhtecFcrESpq5ZIhxZzYIKky8C+3Xk0Sy
