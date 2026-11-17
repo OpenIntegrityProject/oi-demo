@@ -1,5 +1,7 @@
 # oi-demo
 
+> **Superseded design (2026-11-16).** This repository follows an earlier Open Integrity design: signer files in `.repo/config/verification/` and two signer roles. It is being replaced by the Self-Rooted and Identity Repositories specification, with four signer roles and signer files in `.repo/config/signers/`, to be published at https://github.com/OpenIntegrityProject/inception-spec. This repository will be revised to follow it once that repository exists.
+
 A small JavaScript library of text utilities, kept as an [Open Integrity](https://github.com/OpenIntegrityProject/core) repository. Every commit since the inception commit is SSH-signed, and who may sign what is recorded in the repository itself, in `.repo/config/verification/`.
 
 - **Humans** sign with Secure Enclave keys that require Touch ID. Only their keys may sign commits on `main`, tags, and changes to the files that say who may sign.
